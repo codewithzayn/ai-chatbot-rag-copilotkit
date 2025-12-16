@@ -1,21 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processPDFDocument, processText } from '@/lib/rag/pdf-processor';
-import { uploadRateLimiter } from '@/lib/rate-limit';
 
 export async function POST(req: NextRequest) {
   try {
     // Breakpoint for debugging
     console.log("Starting document upload request");
-    
-    // Rate limiting
-    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
-    
-    if (!uploadRateLimiter.check(ip)) {
-      return NextResponse.json(
-        { error: 'Rate limit exceeded. Please try again later.' },
-        { status: 429 }
-      );
-    }
 
     // Check Content-Type
     const contentType = req.headers.get('content-type') || '';

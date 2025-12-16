@@ -4,7 +4,7 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
 import { NextRequest } from "next/server";
-import { chatRateLimiter } from "@/lib/rate-limit/ index";
+import { chatRateLimiter } from "@/lib/rate-limit/index";
 import { searchKnowledgeBaseTool } from "@/lib/rag/tool";
 
 /**
