@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['pdf-parse', 'pdfjs-dist'],
-  turbopack: {}, // Silence error about having webpack config with Turbopack
+  serverExternalPackages: ["@copilotkit/runtime", 'pdf-parse', 'pdfjs-dist'],
+  turbopack: {},
   webpack: (config) => {
     config.resolve.alias.canvas = false;
     return config;

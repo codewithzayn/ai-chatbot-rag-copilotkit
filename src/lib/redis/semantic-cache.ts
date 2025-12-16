@@ -1,12 +1,24 @@
-import Redis from 'ioredis';
+import Redis from "ioredis";
+import crypto from "crypto";
 
-// Redis client for semantic caching (server-side only)
-// Use local Redis by default if REDIS_URL is not set
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+/**
+ * ============================
+ * Redis Client (Server Only)
+ * ============================
+ */
+const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-export const redis = new Redis(redisUrl);
+export const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: 3,
+  enableReadyCheck: true,
+});
 
-interface CacheEntry {
+/**
+ * ============================
+ * Types
+ * ============================
+ */
+export interface SemanticCacheEntry {
   query: string;
   embedding: number[];
   response: string;
@@ -14,97 +26,141 @@ interface CacheEntry {
 }
 
 /**
- * Generate a cache key from query embedding
- * Uses first 8 dimensions as a simple hash
+ * ============================
+ * Constants
+ * ============================
+ *
+ * We store all entries in ONE HASH.
+ * This avoids Redis KEYS and keeps lookups bounded.
  */
-function generateCacheKey(embedding: number[]): string {
-  const hash = embedding
-    .slice(0, 8)
-    .map(n => Math.round(n * 1000))
-    .join('_');
-  return `cache:${hash}`;
-}
+const SEMANTIC_CACHE_HASH = "semantic_cache:v1";
+const MAX_CACHE_ENTRIES = 500; // safety limit
 
 /**
- * Calculate cosine similarity between two vectors
+ * ============================
+ * Math Utils
+ * ============================
  */
 function cosineSimilarity(a: number[], b: number[]): number {
-  let dotProduct = 0;
+  let dot = 0;
   let normA = 0;
   let normB = 0;
 
   for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
+    dot += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
 
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 /**
- * Search for semantically similar cached responses
+ * ============================
+ * Search Semantic Cache
+ * ============================
  */
 export async function searchSemanticCache(
   queryEmbedding: number[],
-  similarityThreshold: number = 0.88
+  similarityThreshold = 0.88
 ): Promise<string | null> {
   try {
-    const keys = await redis.keys('cache:*');
-    
-    if (keys.length === 0) {
+    const entries = await redis.hgetall(SEMANTIC_CACHE_HASH);
+
+    if (!entries || Object.keys(entries).length === 0) {
       return null;
     }
 
-    for (const key of keys) {
-      const entryJson = await redis.get(key);
-      if (!entryJson) continue;
+    for (const raw of Object.values(entries)) {
+      const entry = JSON.parse(raw) as SemanticCacheEntry;
 
-      try {
-        const entry = JSON.parse(entryJson) as CacheEntry;
-        const similarity = cosineSimilarity(queryEmbedding, entry.embedding);
+      const similarity = cosineSimilarity(
+        queryEmbedding,
+        entry.embedding
+      );
 
-        if (similarity >= similarityThreshold) {
-          console.log(`[Cache HIT] Similarity: ${similarity.toFixed(4)}`);
-          return entry.response;
-        }
-      } catch (parseError) {
-        console.warn(`Failed to parse cache entry for key ${key}`, parseError);
-        continue;
+      if (similarity >= similarityThreshold) {
+        console.log(
+          `[Semantic Cache HIT] similarity=${similarity.toFixed(4)}`
+        );
+        return entry.response;
       }
     }
 
-    console.log('[Cache MISS] No similar queries found');
     return null;
   } catch (error) {
-    console.error('Redis cache search error:', error);
+    console.error("[Semantic Cache] search failed:", error);
     return null;
   }
 }
 
 /**
- * Store a response in semantic cache
+ * ============================
+ * Store Semantic Cache Entry
+ * ============================
  */
 export async function storeInSemanticCache(
   query: string,
-  queryEmbedding: number[],
+  embedding: number[],
   response: string,
-  ttlSeconds: number = 3600
+  ttlSeconds = 3600
 ): Promise<void> {
   try {
-    const cacheKey = generateCacheKey(queryEmbedding);
-    
-    const entry: CacheEntry = {
+    const id = crypto.randomUUID();
+
+    const entry: SemanticCacheEntry = {
       query,
-      embedding: queryEmbedding,
+      embedding,
       response,
       timestamp: Date.now(),
     };
 
-    await redis.set(cacheKey, JSON.stringify(entry), 'EX', ttlSeconds);
-    console.log(`[Cache STORE] Key: ${cacheKey}`);
+    // Store entry
+    await redis.hset(
+      SEMANTIC_CACHE_HASH,
+      id,
+      JSON.stringify(entry)
+    );
+
+    // Expire entire hash (sliding TTL)
+    await redis.expire(SEMANTIC_CACHE_HASH, ttlSeconds);
+
+    // Enforce size limit
+    const size = await redis.hlen(SEMANTIC_CACHE_HASH);
+    if (size > MAX_CACHE_ENTRIES) {
+      await evictOldestEntries(size - MAX_CACHE_ENTRIES);
+    }
+
+    console.log(`[Semantic Cache STORE] id=${id}`);
   } catch (error) {
-    console.error('Redis cache store error:', error);
-    throw error;
+    console.error("[Semantic Cache] store failed:", error);
+  }
+}
+
+/**
+ * ============================
+ * Eviction Policy (Oldest First)
+ * ============================
+ */
+async function evictOldestEntries(count: number) {
+  const entries = await redis.hgetall(SEMANTIC_CACHE_HASH);
+
+  const sorted = Object.entries(entries)
+    .map(([key, value]) => ({
+      key,
+      timestamp: JSON.parse(value).timestamp,
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(0, count);
+
+  if (sorted.length > 0) {
+    await redis.hdel(
+      SEMANTIC_CACHE_HASH,
+      ...sorted.map(e => e.key)
+    );
+
+    console.log(
+      `[Semantic Cache] Evicted ${sorted.length} old entries`
+    );
   }
 }
