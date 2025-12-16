@@ -39,13 +39,10 @@ export const POST = async (req: NextRequest) => {
 
     // Rate limiting (safe here)
     if (!chatRateLimiter.check(ip)) {
-      return new Response(
-        JSON.stringify({ error: "Rate limit exceeded" }),
-        { status: 429 }
-      );
+      return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+        status: 429,
+      });
     }
-    console.log('req.headers.get("x-forwarded-for")', req.headers.get("x-forwarded-for"))
-    console.log('req.headers.get("x-forwarded-for")', req.headers.get("x-real-ip"))
     const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
       runtime,
       serviceAdapter,
@@ -55,9 +52,8 @@ export const POST = async (req: NextRequest) => {
   } catch (error) {
     console.error("[CopilotKit API] Fatal error:", error);
 
-    return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+    });
   }
 };

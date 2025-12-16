@@ -1,57 +1,51 @@
 import { generateEmbedding } from "@/lib/openai/client";
-import {
-  retrieveContext,
-  buildContextString,
-} from "@/lib/rag/orchestrator";
+import { retrieveContext, buildContextString } from "@/lib/rag/orchestrator";
 import {
   searchSemanticCache,
   storeInSemanticCache,
 } from "@/lib/redis/semantic-cache";
 
-/**
- * ============================
- * Knowledge Base Search Tool
- * ============================
- *
- * IMPORTANT:
- * - CopilotKit parameter typing is strict
- * - We intentionally avoid defining parameters schema
- * - Arguments are still passed correctly at runtime
- */
 export const searchKnowledgeBaseTool = {
   name: "search_knowledge_base",
-  description: "Search the knowledge base to retrieve relevant documents",
-  parameters: [],
+  description:
+    "Always search the knowledge base for AI agent use cases and resources.",
+  parameters: [
+    {
+      name: "query",
+      description: "The user's exact question or keyword for the search",
+      type: "string" as const, // just 'as const'
+      required: true,
+    },
+  ],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler: async (args: { query?: string; messages?: any[] }) => {
-        console.log("=== Tool Handler Called ===");
+    console.log("=== Tool Handler Called ===");
+
     let query = args.query;
     if (!query && args.messages?.length) {
-      const lastUserMessage = [...args.messages].reverse().find(
-        (m) => m.role === "user"
-      );
+      const lastUserMessage = [...args.messages]
+        .reverse()
+        .find((m) => m.role === "user");
       query = lastUserMessage?.content;
-      console.log('lastUserMessage', lastUserMessage);
     }
 
-    if (!query) {
-      throw new Error("search_knowledge_base: query is required");
-    }
+    if (!query) throw new Error("search_knowledge_base: query required");
+
+    console.log("Query:", query);
 
     const embedding = await generateEmbedding(query);
-    console.log('embedding', embedding);
     const cached = await searchSemanticCache(embedding, 0.88);
-    if (cached) return { role: "tool", content: cached }; // ✅ wrap as message
+    if (cached) {
+      console.log("Returning cached result");
+      return cached; // raw string only
+    }
 
     const context = await retrieveContext(query, 3, 0.7, embedding);
-    console.log('context', context);
     const contextString = buildContextString(context.relevantDocs);
-    console.log('contextString', contextString);
 
     await storeInSemanticCache(query, embedding, contextString);
 
-    return { role: "tool", content: contextString }; // ✅ wrap as message
+    console.log("Returning KB context");
+    return contextString; // raw string only
   },
 };
-
-

@@ -17,15 +17,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={"antialiased"}>
-        <CopilotKit 
-          runtimeUrl="/api/copilotkit" 
-          
+        <CopilotKit
+          runtimeUrl="/api/copilotkit"
           publicLicenseKey="ck_pub_3e7c97449db600e06738aa84458860ea"
-          showDevConsole={false}
+          showDevConsole={true}
         >
           {children}
         </CopilotKit>
-        
       </body>
     </html>
   );
